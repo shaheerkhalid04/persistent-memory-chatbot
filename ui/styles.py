@@ -310,6 +310,16 @@ CSS = f"""
   }}
 
   /* ---------------------------------------------------------- memory panel */
+  /* The panel scrolls inside itself. Otherwise a long fact list makes the page
+     taller than the viewport and the chat column scrolls out of view with it. */
+  .st-key-memory_scroll {{
+    position: sticky;
+    top: 0.25rem;
+    max-height: calc(100vh - 11rem);
+    overflow-y: auto;
+    padding-right: 0.55rem;
+  }}
+
   .mem-head {{
     display: flex; align-items: baseline; justify-content: space-between;
     padding-bottom: 0.7rem; margin-bottom: 0.35rem;

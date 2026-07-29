@@ -436,7 +436,12 @@ def render_chat(conv: Conversation | None) -> None:
 
 
 def render_memory_column() -> None:
-    """Right-hand panel; shows a skeleton if the store has not answered yet."""
+    """Right-hand panel; shows a skeleton if the store has not answered yet.
+
+    Wrapped in a keyed container so the stylesheet can cap its height and give
+    it its own scrollbar. Without that the panel grows past the viewport, the
+    whole page scrolls as one, and the chat gets pushed off screen.
+    """
     if not s("memories_loaded"):
         ui.skeleton(5)
         return
@@ -485,7 +490,8 @@ def main() -> None:
         with chat_col:
             render_chat(conv)
         with memory_col:
-            render_memory_column()
+            with st.container(key="memory_scroll"):
+                render_memory_column()
     else:
         render_chat(conv)
 
