@@ -13,3 +13,4 @@ qdrant_storage/
 .DS_Store
 .idea/
 .vscode/
+data/

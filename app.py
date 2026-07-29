@@ -1,6 +1,7 @@
 """Recall — a chatbot that remembers you between sessions.
 
-Frontend only. Every data operation goes through the seams in ``backend.py``.
+The Streamlit UI. Every data and model operation goes through ``backend.py``,
+so this file knows nothing about SQLite, Groq or Mem0.
 
 Streamlit re-executes this file top to bottom on every interaction, so the whole
 app is organised around one rule: **a click writes an intent into session state
@@ -23,16 +24,18 @@ import streamlit as st
 
 from backend import (
     Conversation,
+    LLMError,
     Memory,
     Message,
     StorageError,
     clear_memories,
     delete_conversation,
     delete_memory,
-    extract_memories,
     load_conversations,
     load_memories,
+    observe_turn,
     save_conversation,
+    status_label,
     stream_reply,
     suggest_title,
     upsert_memory,
@@ -226,11 +229,13 @@ def consume_pending_prompt() -> None:
         conv.title = suggest_title(str(prompt))
     attempt(save_conversation, conv)
 
-    memories: list[Memory] = list(s("memories"))
-    for mem in extract_memories(str(prompt), conv.id, memories):
-        if attempt(upsert_memory, mem):
-            replace_memory(mem)
-            st.toast(f"Remembered: {mem.text}", icon=":material/bookmark_added:")
+    # The handler extracts, decides ADD vs UPDATE against what is already
+    # stored, and persists. We only mirror the result into the session cache.
+    for event in guard(observe_turn, str(prompt), conv.id, fallback=[]) or []:
+        replace_memory(event.memory)
+        icon = (":material/bookmark_added:" if event.kind == "added"
+                else ":material/autorenew:")
+        st.toast(event.toast, icon=icon)
 
     st.session_state["pending_prompt"] = None
 
@@ -251,9 +256,14 @@ def run_stream(conv: Conversation) -> None:
     with st.chat_message("assistant"):
         try:
             reply = st.write_stream(stream_reply(payload, list(s("memories"))))
+        except LLMError as exc:
+            st.session_state["is_streaming"] = False
+            st.error(f"The model call failed — {exc}", icon=":material/error:")
+            return
         except Exception as exc:
             st.session_state["is_streaming"] = False
-            st.error(f"The model call failed: {type(exc).__name__}: {exc}")
+            st.error(f"Unexpected model error — {type(exc).__name__}: {exc}",
+                     icon=":material/error:")
             return
 
     conv.messages.append(Message("assistant", str(reply)))
@@ -295,6 +305,8 @@ def render_sidebar() -> None:
             active_id=str(s("active_id")) if s("active_id") else None,
             renaming_id=str(s("renaming_id")) if s("renaming_id") else None,
             confirm_delete_id=str(s("confirm_delete_id")) if s("confirm_delete_id") else None,
+            empty_message=("No conversations match." if needle
+                           else "No conversations yet — start one above."),
             on_select=handle_select,
             on_rename_start=handle_rename_start,
             on_rename_commit=handle_rename_commit,
@@ -305,7 +317,7 @@ def render_sidebar() -> None:
         )
 
         st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
-        st.caption("Memory store · local  ·  Model · stub")
+        st.caption(status_label())
 
 
 def handle_select(conversation_id: str) -> None:

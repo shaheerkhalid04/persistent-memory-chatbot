@@ -1,15 +1,22 @@
-# --- UI ---------------------------------------------------------------------
+# --- UI ----------------------------------------------------------------------
 streamlit>=1.40,<2.0
-
-# --- Memory layer (uncomment the one you implement backend.py against) -------
-# mem0ai>=0.1.50           # Mem0 — hosted or self-hosted, vector store + LLM extraction
-# zep-cloud>=2.0           # Zep — temporal knowledge graph, session-scoped facts
-# langmem>=0.0.10          # LangMem — memory primitives for LangGraph agents
-
-# --- LLM backend (pick one) --------------------------------------------------
-# groq>=0.11               # fastest inference, generous free tier
-# google-genai>=1.0        # Gemini
-# openai>=1.50             # OpenAI
 
 # --- Config ------------------------------------------------------------------
 python-dotenv>=1.0
+
+# --- LLM backend -------------------------------------------------------------
+# Groq is the default: free tier, no card, fastest inference.
+groq>=0.11
+
+# Alternatives — uncomment the one you configure a key for. Imports are lazy,
+# so an uninstalled provider costs nothing until it is selected.
+# google-genai>=1.0        # Gemini
+# openai>=1.50             # OpenAI
+
+# --- Memory backend ----------------------------------------------------------
+# Default is SQLite on disk (stdlib, nothing to install).
+# Uncomment for the hosted Mem0 platform via MEMORY_BACKEND=mem0.
+# mem0ai>=0.1.50
+
+# --- Tests -------------------------------------------------------------------
+# pytest>=8.0

@@ -121,6 +121,7 @@ def conversation_list(
     renaming_id: str | None,
     confirm_delete_id: str | None,
     *,
+    empty_message: str = "No conversations yet.",
     on_select: Callable[[str], None],
     on_rename_start: Callable[[str], None],
     on_rename_commit: Callable[[str, str], None],
@@ -136,6 +137,8 @@ def conversation_list(
         active_id: Conversation to highlight, if any.
         renaming_id: Conversation currently in inline-rename mode.
         confirm_delete_id: Conversation currently awaiting delete confirmation.
+        empty_message: Shown when the list is empty. The caller distinguishes an
+            empty store from a search that matched nothing.
         on_select: Called with a conversation id when a row is clicked.
         on_rename_start: Called with an id to enter rename mode.
         on_rename_commit: Called with ``(id, new_title)``.
@@ -145,7 +148,7 @@ def conversation_list(
         on_delete_cancel: Called to disarm the confirm step.
     """
     if not conversations:
-        st.caption("No conversations match.")
+        st.caption(empty_message)
         return
 
     for conv in conversations:
