@@ -29,6 +29,7 @@ def make_settings(db_path) -> Settings:
         memory_backend="sqlite",
         mem0_api_key=None,
         user_id="tester",
+        multi_user=False,
         max_memories_in_context=40,
     )
 
@@ -91,6 +92,42 @@ def test_conversations_survive_a_restart(db_path):
     assert reloaded[0].title == "Weekend plans"
     assert [m.role for m in reloaded[0].messages] == ["user", "assistant"]
     assert [m.content for m in reloaded[0].messages] == ["hi", "hello"]
+
+
+def test_conversations_are_namespaced_by_user(db_path):
+    """A public deployment must not leak one visitor's threads to another."""
+    from models import Conversation, Message
+
+    alice = SQLiteStore(db_path, "alice")
+    conv = Conversation.new("Alice's private thread")
+    conv.messages = [Message("user", "something personal")]
+    alice.save_conversation(conv)
+
+    assert [c.title for c in alice.load_conversations()] == ["Alice's private thread"]
+    assert SQLiteStore(db_path, "bob").load_conversations() == []
+
+    # Bob cannot delete what he cannot see.
+    SQLiteStore(db_path, "bob").delete_conversation(conv.id)
+    assert len(alice.load_conversations()) == 1
+
+
+def test_legacy_database_without_user_column_is_migrated(db_path):
+    """A database written before namespacing must stay readable."""
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """CREATE TABLE conversations (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+           INSERT INTO conversations VALUES
+               ('old1', 'Legacy thread', '2026-01-01T00:00:00', '2026-01-01T00:00:00');"""
+    )
+    conn.commit()
+    conn.close()
+
+    store = SQLiteStore(db_path, "local")
+    assert [c.title for c in store.load_conversations()] == ["Legacy thread"]
 
 
 def test_memories_are_namespaced_by_user(db_path):

@@ -23,6 +23,7 @@ from models import Conversation, Memory, Message, StorageError
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT 'local',
     title       TEXT NOT NULL,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
@@ -50,6 +51,13 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id, category);
+"""
+
+#: Indexes over columns that older databases may not have yet. Created only
+#: after the migration below has had a chance to add those columns — an index
+#: naming a missing column aborts the whole script and bricks the open.
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, updated_at);
 """
 
 
@@ -106,16 +114,31 @@ class SQLiteStore:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.executescript(SCHEMA)
 
+            # Databases created before conversations were namespaced predate the
+            # user_id column; add it in place rather than making them unreadable.
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)")}
+            if "user_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE conversations ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'"
+                )
+
+            conn.executescript(INDEXES)
+
     # ----------------------------------------------------------- conversations
 
     def load_conversations(self) -> list[Conversation]:
         """Read every conversation with its messages, newest activity first."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM conversations ORDER BY updated_at DESC"
+                "SELECT * FROM conversations WHERE user_id = ? ORDER BY updated_at DESC",
+                (self.user_id,),
             ).fetchall()
             messages = conn.execute(
-                "SELECT * FROM messages ORDER BY conversation_id, position"
+                """SELECT m.* FROM messages m
+                   JOIN conversations c ON c.id = m.conversation_id
+                   WHERE c.user_id = ?
+                   ORDER BY m.conversation_id, m.position""",
+                (self.user_id,),
             ).fetchall()
 
         by_conversation: dict[str, list[Message]] = {}
@@ -145,11 +168,11 @@ class SQLiteStore:
         conv.updated_at = datetime.now()
         with self._connect() as conn:
             conn.execute(
-                """INSERT INTO conversations (id, title, created_at, updated_at)
-                   VALUES (?, ?, ?, ?)
+                """INSERT INTO conversations (id, user_id, title, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(id) DO UPDATE SET title=excluded.title,
                                                  updated_at=excluded.updated_at""",
-                (conv.id, conv.title, _iso(conv.created_at), _iso(conv.updated_at)),
+                (conv.id, self.user_id, conv.title, _iso(conv.created_at), _iso(conv.updated_at)),
             )
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv.id,))
             conn.executemany(
@@ -164,8 +187,15 @@ class SQLiteStore:
     def delete_conversation(self, conversation_id: str) -> None:
         """Remove a conversation and, by cascade, its messages."""
         with self._connect() as conn:
-            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
-            conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            conn.execute(
+                """DELETE FROM messages WHERE conversation_id IN
+                   (SELECT id FROM conversations WHERE id = ? AND user_id = ?)""",
+                (conversation_id, self.user_id),
+            )
+            conn.execute(
+                "DELETE FROM conversations WHERE id = ? AND user_id = ?",
+                (conversation_id, self.user_id),
+            )
 
     # ---------------------------------------------------------------- memories
 

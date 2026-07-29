@@ -18,6 +18,7 @@ Pass order matters and is fixed:
 
 from __future__ import annotations
 
+import uuid
 from typing import Callable, TypeVar
 
 import streamlit as st
@@ -40,6 +41,7 @@ from backend import (
     suggest_title,
     upsert_memory,
 )
+from config import get_settings
 from ui import components as ui
 from ui.styles import inject as inject_css
 
@@ -83,6 +85,30 @@ def init_state() -> None:
     for key, value in DEFAULTS.items():
         if key not in st.session_state:
             st.session_state[key] = value.copy() if isinstance(value, list) else value
+
+    if "user_id" not in st.session_state:
+        st.session_state["user_id"] = _identity()
+
+
+def _identity() -> str:
+    """Which memory namespace this browser session reads and writes.
+
+    Single-user (the default, and how the app is meant to be run locally) means
+    everyone shares the configured ``USER_ID`` and memories persist across
+    restarts. With ``MULTI_USER=1`` — for a public deployment — each browser
+    session gets its own id, so visitors cannot see each other's conversations
+    or facts. That id lives only in session state, so a public visitor's memory
+    lasts as long as their tab.
+    """
+    settings = get_settings()
+    if not settings.multi_user:
+        return settings.user_id
+    return f"session-{uuid.uuid4().hex[:12]}"
+
+
+def user_id() -> str:
+    """The active namespace, safe to read before init_state on a first pass."""
+    return str(st.session_state.get("user_id") or get_settings().user_id)
 
 
 def s(key: str) -> object:
@@ -164,7 +190,7 @@ def start_new_chat() -> None:
     st.session_state["active_id"] = conv.id
     st.session_state["renaming_id"] = None
     st.session_state["confirm_delete_id"] = None
-    attempt(save_conversation, conv)
+    attempt(save_conversation, conv, user_id())
     st.rerun()
 
 
@@ -172,7 +198,7 @@ def bootstrap() -> None:
     """First-pass load of conversations and memories, with visible loading UI."""
     if not s("initialized"):
         with st.spinner("Opening your history…"):
-            conversations = guard(load_conversations, fallback=[]) or []
+            conversations = guard(load_conversations, user_id(), fallback=[]) or []
         st.session_state["conversations"] = conversations
         st.session_state["active_id"] = conversations[0].id if conversations else None
         st.session_state["initialized"] = True
@@ -183,7 +209,7 @@ def bootstrap() -> None:
             st.markdown('<div class="rail-label">Recalling what I know about you</div>',
                         unsafe_allow_html=True)
             ui.skeleton(4)
-        st.session_state["memories"] = guard(load_memories, fallback=[]) or []
+        st.session_state["memories"] = guard(load_memories, user_id(), fallback=[]) or []
         st.session_state["memories_loaded"] = True
         slot.empty()
 
@@ -227,11 +253,11 @@ def consume_pending_prompt() -> None:
     conv.messages.append(Message("user", str(prompt)))
     if conv.title == DEFAULT_TITLE:
         conv.title = suggest_title(str(prompt))
-    attempt(save_conversation, conv)
+    attempt(save_conversation, conv, user_id())
 
     # The handler extracts, decides ADD vs UPDATE against what is already
     # stored, and persists. We only mirror the result into the session cache.
-    for event in guard(observe_turn, str(prompt), conv.id, fallback=[]) or []:
+    for event in guard(observe_turn, str(prompt), conv.id, user_id(), fallback=[]) or []:
         replace_memory(event.memory)
         icon = (":material/bookmark_added:" if event.kind == "added"
                 else ":material/autorenew:")
@@ -255,7 +281,7 @@ def run_stream(conv: Conversation) -> None:
     payload = [m.as_dict() for m in conv.messages]
     with st.chat_message("assistant"):
         try:
-            reply = st.write_stream(stream_reply(payload, list(s("memories"))))
+            reply = st.write_stream(stream_reply(payload, list(s("memories")), user_id()))
         except LLMError as exc:
             st.session_state["is_streaming"] = False
             st.error(f"The model call failed — {exc}", icon=":material/error:")
@@ -267,7 +293,7 @@ def run_stream(conv: Conversation) -> None:
             return
 
     conv.messages.append(Message("assistant", str(reply)))
-    attempt(save_conversation, conv)
+    attempt(save_conversation, conv, user_id())
     st.session_state["is_streaming"] = False
     st.rerun()
 
@@ -337,7 +363,7 @@ def handle_rename_commit(conversation_id: str, new_title: str) -> None:
     conv = next((c for c in s("conversations") if c.id == conversation_id), None)
     if conv is not None:
         conv.title = new_title.strip() or DEFAULT_TITLE
-        attempt(save_conversation, conv)
+        attempt(save_conversation, conv, user_id())
     st.session_state["renaming_id"] = None
     st.rerun()
 
@@ -354,7 +380,7 @@ def handle_delete_request(conversation_id: str) -> None:
 
 
 def handle_delete_confirm(conversation_id: str) -> None:
-    attempt(delete_conversation, conversation_id)
+    attempt(delete_conversation, conversation_id, user_id())
     remaining = [c for c in s("conversations") if c.id != conversation_id]
     st.session_state["conversations"] = remaining
     if s("active_id") == conversation_id:
@@ -387,7 +413,7 @@ def handle_memory_edit_commit(memory_id: str, new_text: str) -> None:
     text = new_text.strip()
     if mem is not None and text:
         updated = dc_replace(mem, text=text, updated_at=datetime.now())
-        attempt(upsert_memory, updated)
+        attempt(upsert_memory, updated, user_id())
         replace_memory(updated)
         queue_toast(f"Updated: {text}", ":material/edit:")
     st.session_state["editing_memory_id"] = None
@@ -400,7 +426,7 @@ def handle_memory_edit_cancel() -> None:
 
 
 def handle_memory_delete(memory_id: str) -> None:
-    attempt(delete_memory, memory_id)
+    attempt(delete_memory, memory_id, user_id())
     st.session_state["memories"] = [m for m in s("memories") if m.id != memory_id]
     st.session_state["editing_memory_id"] = None
     queue_toast("Forgotten", ":material/delete:")
@@ -408,7 +434,7 @@ def handle_memory_delete(memory_id: str) -> None:
 
 
 def handle_memory_clear_all() -> None:
-    attempt(clear_memories)
+    attempt(clear_memories, user_id())
     st.session_state["memories"] = []
     st.session_state["editing_memory_id"] = None
     queue_toast("Memory cleared", ":material/delete_sweep:")

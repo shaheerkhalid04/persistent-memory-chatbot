@@ -61,7 +61,10 @@ class Settings:
         db_path: Where the SQLite file lives.
         memory_backend: ``sqlite`` (default) or ``mem0``.
         mem0_api_key: Key for the hosted Mem0 platform, when that backend is on.
-        user_id: Namespaces memories, so one database can serve several people.
+        user_id: Default namespace, used when the app is single-user.
+        multi_user: When true, each browser session gets its own namespace
+            instead of sharing ``user_id``. Turn this on for a public
+            deployment, where strangers must not see each other's memories.
         max_memories_in_context: Cap on facts injected into the system prompt.
     """
 
@@ -72,6 +75,7 @@ class Settings:
     memory_backend: str
     mem0_api_key: str | None
     user_id: str
+    multi_user: bool
     max_memories_in_context: int
 
     @property
@@ -141,6 +145,7 @@ def get_settings() -> Settings:
         memory_backend=backend,
         mem0_api_key=mem0_key,
         user_id=_secret("USER_ID") or "local",
+        multi_user=(_secret("MULTI_USER") or "").strip().lower() in {"1", "true", "yes"},
         max_memories_in_context=int(_secret("MAX_MEMORIES_IN_CONTEXT") or 40),
     )
 

@@ -11,6 +11,7 @@ the right lifetime for the database handle and the provider client.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Iterator
 
 from config import Settings, get_settings
@@ -47,8 +48,11 @@ __all__ = [
     "upsert_memory",
 ]
 
-_store: SQLiteStore | None = None
-_handler: MemoryHandler | None = None
+# Streamlit serves every browser session from one process, so the wiring is
+# cached per user id rather than globally. With MULTI_USER off there is exactly
+# one entry; with it on, each visitor gets an isolated store.
+_stores: dict[str, SQLiteStore] = {}
+_handlers: dict[str, MemoryHandler] = {}
 _llm: LLMConnector | None = None
 
 
@@ -56,40 +60,52 @@ def _settings() -> Settings:
     return get_settings()
 
 
-def store() -> SQLiteStore:
-    """The shared SQLite store, opened and migrated on first use."""
-    global _store
-    if _store is None:
-        settings = _settings()
-        _store = SQLiteStore(settings.db_path, settings.user_id)
-    return _store
+def _resolve(user_id: str | None) -> str:
+    """Fall back to the configured default namespace."""
+    return user_id or _settings().user_id
+
+
+def store(user_id: str | None = None) -> SQLiteStore:
+    """The SQLite store for one user, opened and migrated on first use."""
+    key = _resolve(user_id)
+    if key not in _stores:
+        _stores[key] = SQLiteStore(_settings().db_path, key)
+    return _stores[key]
 
 
 def llm() -> LLMConnector:
-    """The shared LLM connector."""
+    """The shared LLM connector. Stateless, so one instance serves everyone."""
     global _llm
     if _llm is None:
         _llm = LLMConnector(_settings())
     return _llm
 
 
-def memory() -> MemoryHandler:
-    """The shared memory handler, bound to the configured backend."""
-    global _handler
-    if _handler is None:
+def memory(user_id: str | None = None) -> MemoryHandler:
+    """The memory handler for one user, bound to the configured backend."""
+    key = _resolve(user_id)
+    if key not in _handlers:
         settings = _settings()
-        _handler = MemoryHandler(
-            store=build_memory_store(settings, store()),
+        scoped = replace_settings(settings, user_id=key)
+        _handlers[key] = MemoryHandler(
+            store=build_memory_store(scoped, store(key)),
             llm=llm(),
-            settings=settings,
+            settings=scoped,
         )
-    return _handler
+    return _handlers[key]
+
+
+def replace_settings(settings: Settings, **changes) -> Settings:
+    """Copy settings with overrides. Settings is frozen, so this is the seam."""
+    return dataclasses.replace(settings, **changes)
 
 
 def reset() -> None:
     """Drop the cached wiring. Used by tests that change the environment."""
-    global _store, _handler, _llm
-    _store = _handler = _llm = None
+    global _llm
+    _stores.clear()
+    _handlers.clear()
+    _llm = None
 
 
 def status_label() -> str:
@@ -104,7 +120,7 @@ def status_label() -> str:
 # --------------------------------------------------------------------------- #
 
 
-def load_conversations() -> list[Conversation]:
+def load_conversations(user_id: str | None = None) -> list[Conversation]:
     """Every stored conversation, newest activity first.
 
     Returns:
@@ -114,10 +130,10 @@ def load_conversations() -> list[Conversation]:
     Raises:
         StorageError: If the database cannot be read.
     """
-    return store().load_conversations()
+    return store(user_id).load_conversations()
 
 
-def save_conversation(conv: Conversation) -> None:
+def save_conversation(conv: Conversation, user_id: str | None = None) -> None:
     """Insert or replace a conversation and its messages.
 
     Args:
@@ -126,10 +142,10 @@ def save_conversation(conv: Conversation) -> None:
     Raises:
         StorageError: If the write fails.
     """
-    store().save_conversation(conv)
+    store(user_id).save_conversation(conv)
 
 
-def delete_conversation(conversation_id: str) -> None:
+def delete_conversation(conversation_id: str, user_id: str | None = None) -> None:
     """Remove a conversation and its messages.
 
     Args:
@@ -138,7 +154,7 @@ def delete_conversation(conversation_id: str) -> None:
     Raises:
         StorageError: If the delete fails.
     """
-    store().delete_conversation(conversation_id)
+    store(user_id).delete_conversation(conversation_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -146,16 +162,16 @@ def delete_conversation(conversation_id: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def load_memories() -> list[Memory]:
+def load_memories(user_id: str | None = None) -> list[Memory]:
     """Every stored fact about the user.
 
     Raises:
         StorageError: If the store cannot be read.
     """
-    return memory().all()
+    return memory(user_id).all()
 
 
-def upsert_memory(m: Memory) -> None:
+def upsert_memory(m: Memory, user_id: str | None = None) -> None:
     """Insert a fact, or overwrite the one with the same id.
 
     Args:
@@ -165,10 +181,10 @@ def upsert_memory(m: Memory) -> None:
     Raises:
         StorageError: If the write fails.
     """
-    memory().upsert(m)
+    memory(user_id).upsert(m)
 
 
-def delete_memory(memory_id: str) -> None:
+def delete_memory(memory_id: str, user_id: str | None = None) -> None:
     """Forget a single fact.
 
     Args:
@@ -177,19 +193,20 @@ def delete_memory(memory_id: str) -> None:
     Raises:
         StorageError: If the delete fails.
     """
-    memory().delete(memory_id)
+    memory(user_id).delete(memory_id)
 
 
-def clear_memories() -> None:
+def clear_memories(user_id: str | None = None) -> None:
     """Forget everything.
 
     Raises:
         StorageError: If the wipe fails.
     """
-    memory().clear()
+    memory(user_id).clear()
 
 
-def observe_turn(user_text: str, conversation_id: str | None = None) -> list[MemoryEvent]:
+def observe_turn(user_text: str, conversation_id: str | None = None,
+                 user_id: str | None = None) -> list[MemoryEvent]:
     """Decide what to remember from a user turn, and persist it.
 
     Args:
@@ -202,7 +219,7 @@ def observe_turn(user_text: str, conversation_id: str | None = None) -> list[Mem
     Raises:
         StorageError: If a write fails.
     """
-    return memory().observe(user_text, conversation_id)
+    return memory(user_id).observe(user_text, conversation_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -210,7 +227,8 @@ def observe_turn(user_text: str, conversation_id: str | None = None) -> list[Mem
 # --------------------------------------------------------------------------- #
 
 
-def stream_reply(messages: list[dict], memories: list[Memory]) -> Iterator[str]:
+def stream_reply(messages: list[dict], memories: list[Memory],
+                 user_id: str | None = None) -> Iterator[str]:
     """Stream the assistant's reply with the user's facts in context.
 
     Args:
@@ -225,7 +243,7 @@ def stream_reply(messages: list[dict], memories: list[Memory]) -> Iterator[str]:
         LLMError: If the provider rejects the call.
     """
     last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-    relevant = memory().recall(last_user, memories)
+    relevant = memory(user_id).recall(last_user, memories)
     yield from llm().stream_chat(messages, relevant)
 
 

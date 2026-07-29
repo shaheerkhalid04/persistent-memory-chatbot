@@ -132,6 +132,7 @@ code runs locally and on Streamlit Cloud. See [`.env.example`](.env.example).
 | `MEMORY_BACKEND` | `sqlite` | Or `mem0` with a `MEM0_API_KEY` |
 | `RECALL_DB_PATH` | `data/recall.db` | Where the database lives |
 | `USER_ID` | `local` | Namespaces memories, so one file serves several profiles |
+| `MULTI_USER` | `0` | Give each browser session its own namespace (public deploys) |
 | `MAX_MEMORIES_IN_CONTEXT` | `40` | Cap on facts injected per turn |
 
 Providers are auto-detected by key presence in the order Groq → Gemini → OpenAI.
@@ -142,7 +143,7 @@ With none set, the app runs in demo mode and says so in the sidebar.
 ## Testing
 
 ```bash
-pytest -q          # 24 tests, no network, no API key needed
+pytest -q          # 26 tests, no network, no API key needed
 ```
 
 The suite replaces the model with a fake whose JSON decisions are scripted, so
@@ -154,8 +155,9 @@ behaviours directly:
 - `test_update_replaces_the_old_fact` — asserts **one** row remains, `created_at`
   is preserved, `updated_at` is bumped, and the text now says 26.
 
-Plus namespacing, verbatim-duplicate rejection, recall ranking, and six
-parametrised malformed-response cases.
+Plus per-user isolation of both memories and conversations, schema migration of
+a database predating namespacing, verbatim-duplicate rejection, recall ranking,
+and six parametrised malformed-response cases.
 
 Against the live API, the full scenario was verified end to end: two facts
 extracted from one sentence with correct categories, survived a process restart,
@@ -200,14 +202,17 @@ Live: **https://recall-memory-chatbot.streamlit.app**
 Deploys from `main` on Streamlit Community Cloud. Add `GROQ_API_KEY` under app
 settings → Secrets to take the hosted instance out of demo mode.
 
-Two caveats for a public deployment:
+Set `MULTI_USER=1` there too. Without it every visitor shares one namespace and
+would read each other's conversations and memories; with it, each browser session
+gets its own isolated store. Conversations and memories are both namespaced, and
+the delete paths are scoped as well, so one visitor cannot remove another's data.
 
-- **The store is shared.** Every visitor hits the same `USER_ID`, so they see
-  each other's memories. Fine for a demo, wrong for real use — give each person
-  their own `USER_ID`.
-- **The container's disk is ephemeral.** Streamlit Cloud rebuilds wipe
-  `data/recall.db`. Persistence across *restarts* works; persistence across
-  *redeploys* needs a hosted store — point `MEMORY_BACKEND=mem0` at the platform,
-  or move the database to a managed Postgres.
+One caveat that remains: **the container's disk is ephemeral.** A Streamlit Cloud
+rebuild wipes `data/recall.db`. Persistence across *restarts* works; persistence
+across *redeploys* needs a hosted store — point `MEMORY_BACKEND=mem0` at the
+platform, or move the database to managed Postgres. And in multi-user mode a
+visitor's namespace lives in session state, so their memory lasts as long as
+their tab.
 
-Neither affects local use, which is what the project is built for.
+Neither affects local single-user use, which is what the project is built for:
+there `USER_ID` stays `local` and memories persist indefinitely.
