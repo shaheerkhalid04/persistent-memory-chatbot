@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+*.db
+*.sqlite3
+.streamlit/secrets.toml
+memory_store/
+chroma/
+qdrant_storage/
+.DS_Store
+.idea/
+.vscode/

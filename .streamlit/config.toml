@@ -1,0 +1,20 @@
+# Values here must match the palette in ui/styles.py — Streamlit paints its own
+# chrome with these before our stylesheet lands, so a mismatch shows as a flash.
+
+[theme]
+base = "dark"
+primaryColor = "#FF6A3D"
+backgroundColor = "#0A0B0D"
+secondaryBackgroundColor = "#121316"
+textColor = "#EDEDEF"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
+
+[browser]
+gatherUsageStats = false
+
+[server]
+runOnSave = true

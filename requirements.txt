@@ -1,0 +1,15 @@
+# --- UI ---------------------------------------------------------------------
+streamlit>=1.40,<2.0
+
+# --- Memory layer (uncomment the one you implement backend.py against) -------
+# mem0ai>=0.1.50           # Mem0 — hosted or self-hosted, vector store + LLM extraction
+# zep-cloud>=2.0           # Zep — temporal knowledge graph, session-scoped facts
+# langmem>=0.0.10          # LangMem — memory primitives for LangGraph agents
+
+# --- LLM backend (pick one) --------------------------------------------------
+# groq>=0.11               # fastest inference, generous free tier
+# google-genai>=1.0        # Gemini
+# openai>=1.50             # OpenAI
+
+# --- Config ------------------------------------------------------------------
+python-dotenv>=1.0
