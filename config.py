@@ -93,7 +93,8 @@ class Settings:
 
 #: Default chat model per provider. Override with ``<PROVIDER>_MODEL``.
 DEFAULT_MODELS: dict[str, str] = {
-    "groq": "llama-3.3-70b-versatile",
+    # Groq retired llama-3.3-70b-versatile on 16 Aug 2026.
+    "groq": "openai/gpt-oss-120b",
     "gemini": "gemini-2.0-flash",
     "openai": "gpt-4o-mini",
 }

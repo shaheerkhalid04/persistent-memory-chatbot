@@ -83,6 +83,13 @@ class GroqProvider:
             raise LLMError("groq is not installed — run: pip install groq") from exc
         self._client = Groq(api_key=settings.api_key)
         self._model = settings.model
+        # gpt-oss models reason before answering. Low effort keeps replies fast;
+        # only the answer text is ever streamed or stored, never the reasoning.
+        self._extra = (
+            {"extra_body": {"reasoning_effort": "low"}}
+            if self._model.startswith("openai/gpt-oss")
+            else {}
+        )
 
     def stream(self, system: str, messages: list[dict]) -> Iterator[str]:
         stream = self._client.chat.completions.create(
@@ -90,6 +97,7 @@ class GroqProvider:
             messages=[{"role": "system", "content": system}, *messages],
             stream=True,
             temperature=0.6,
+            **self._extra,
         )
         for chunk in stream:
             delta = chunk.choices[0].delta.content
@@ -105,6 +113,7 @@ class GroqProvider:
             ],
             response_format={"type": "json_object"},
             temperature=0,
+            **self._extra,
         )
         return response.choices[0].message.content or "{}"
 
