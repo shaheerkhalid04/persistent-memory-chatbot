@@ -128,7 +128,7 @@ code runs locally and on Streamlit Cloud. See [`.env.example`](.env.example).
 | --- | --- | --- |
 | `GROQ_API_KEY` | — | Enables Groq. Also `GEMINI_API_KEY`, `OPENAI_API_KEY` |
 | `LLM_PROVIDER` | auto | Pin a provider instead of auto-detecting by key |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Per-provider model override |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Per-provider model override. Groq retired `llama-3.3-70b-versatile` on 16 Aug 2026 |
 | `MEMORY_BACKEND` | `sqlite` | Or `mem0` with a `MEM0_API_KEY` |
 | `RECALL_DB_PATH` | `data/recall.db` | Where the database lives |
 | `USER_ID` | `local` | Namespaces memories, so one file serves several profiles |
